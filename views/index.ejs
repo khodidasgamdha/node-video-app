@@ -1,59 +1,137 @@
 <!DOCTYPE html>
-<html lang="en" dir="ltr">
+<html>
   <head>
-    <meta charset="utf-8" />
-    <title>Video App</title>
-    <style media="screen">
-      *{
-        margin: 0;
-      }
-      #videoDiv{
-        display: grid;
-        grid-gap: 10px;
-        height:80%;
-        position: relative;
-        grid-template-columns: repeat(auto-fill, 300px);
-        grid-auto-rows: 300px;
-      }
-      #footer{
-        width: 100%;
-        height: 50px;
-        background-color: white;
-        display: flex;
-        justify-content:center;
-        flex:1;
-        border-bottom: 1px solid grey;
-        margin-top: 10px;
-      }
-      button{
-        height: 30px;
-        width: 80px;
-        margin-top: 10px;
-        text-align: center;
-        border-radius: 10px;
-        outline: none;
-        border:none;
-        text-decoration: none;
-        background-color:red;
-        cursor: pointer;
-      }
-      video {
-        width: 100%;
-        height: 100%;
-        object-fit:cover;
-        border:2px solid white;
-      }
-    </style>
-    <script type="text/javascript">
-      var roomID = "<%= RoomId %>"
-    </script>
-    <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js" defer></script>
-    <script src="socket.io/socket.io.js" defer></script>
-    <script src="index.js" charset="utf-8" defer></script>
+    <title>1:1 Voice Call App</title>
   </head>
   <body>
-    <div id="videoDiv">
-
+    <h1>1:1 Voice Call App</h1>
+    <div>
+      <video id="localVideo" autoplays></video>
+      <video id="remoteVideo" autoplay></video>
     </div>
+    <div>
+      <textarea id="messageInput" placeholder="Type a message"></textarea>
+      <button id="sendMessageBtn">Send</button>
+    </div>
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+      const socket = io();
+      const localVideo = document.querySelector("#localVideo");
+      const remoteVideo = document.querySelector("#remoteVideo");
+      const messageInput = document.querySelector("#messageInput");
+      const sendMessageBtn = document.querySelector("#sendMessageBtn");
+
+      const constraints = {
+        video: true,
+        audio: true,
+      };
+
+      let localStream;
+      let peerConnection;
+
+      navigator.mediaDevices
+        .getUserMedia(constraints)
+        .then((stream) => {
+          localStream = stream;
+          localVideo.srcObject = stream;
+        })
+        .catch((error) => {
+          console.error("Error getting user media:", error);
+        });
+
+      function createPeerConnection() {
+        peerConnection = new RTCPeerConnection({
+          iceServers: [
+            {
+              urls: "stun:stun.l.google.com:19302",
+            },
+          ],
+        });
+
+        peerConnection.onicecandidate = (event) => {
+          if (event.candidate) {
+            console.log("sending ice candidate");
+            socket.emit("ice-candidate", event.candidate);
+          }
+        };
+
+        peerConnection.ontrack = (event) => {
+          console.log("received remote stream");
+          remoteVideo.srcObject = event.streams[0];
+        };
+
+        peerConnection.addTrack(localStream.getAudioTracks()[0], localStream);
+      }
+
+      socket.on("user-connected", (userId) => {
+        console.log("user connected:", userId);
+
+        createPeerConnection();
+
+        peerConnection
+          .createOffer()
+          .then((offer) => {
+            console.log("sending local description:", offer);
+            return peerConnection.setLocalDescription(offer);
+          })
+          .then(() => {
+            console.log("sending offer to remote peer");
+            socket.emit("offer", peerConnection.localDescription, userId);
+          })
+          .catch((error) => {
+            console.error("Error creating offer:", error);
+          });
+      });
+
+      socket.on("offer", (description, userId) => {
+        console.log("received offer from remote peer:", description);
+
+        createPeerConnection();
+
+        peerConnection
+          .setRemoteDescription(description)
+          .then(() => {
+            console.log("creating answer");
+            return peerConnection.createAnswer();
+          })
+          .then((answer) => {
+            console.log("sending local description:", answer);
+            return peerConnection.setLocalDescription(answer);
+          })
+          .then(() => {
+            console.log("sending answer to remote peer");
+            socket.emit("answer", peerConnection.localDescription, userId);
+          })
+          .catch((error) => {
+            console.error("Error creating or setting answer:", error);
+          });
+      });
+
+      socket.on("answer", (description, userId) => {
+        console.log("received answer from remote peer:", description);
+
+        peerConnection
+          .setRemoteDescription(description)
+          .then(() => {
+            console.log("set remote description");
+          })
+          .catch((error) => {
+            console.error("Error setting remote description:", error);
+          });
+      });
+
+      socket.on("ice-candidate", (candidate) => {
+        console.log("received ice candidate:", candidate);
+
+        peerConnection
+          .addIceCandidate(candidate)
+          .then(() => {
+            console.log("added ice candidate");
+          })
+          .catch((error) => {
+            console.error("Error adding ice candidate:", error);
+          });
+      });
+    </script>
   </body>
 </html>
